@@ -1,0 +1,6 @@
+# Archivos del sistema operativo (Mac/Windows)
+.DS_Store
+Thumbs.db
+
+# Logs y temporales
+*.log

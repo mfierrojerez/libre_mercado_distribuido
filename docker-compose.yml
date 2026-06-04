@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # ---------------------------------------------------------
+  # NODO MATRIZ (CASA MATRIZ / ADMINISTRACIÓN GLOBAL)
+  # Roles: Tablas Globales, Cuentas de Usuario, Catálogo
+  # ---------------------------------------------------------
+  nodo_matriz_db:
+    image: mariadb:10.6
+    container_name: NODO_MATRIZ_DB
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: db_matriz # <- Base de datos renombrada
+    ports:
+      - "3306:3306" 
+    networks:
+      - red_distribuida
+
+  # ---------------------------------------------------------
+  # NODO SUCURSAL NORTE
+  # ---------------------------------------------------------
+  nodo_norte_db:
+    image: mariadb:10.6
+    container_name: NODO_NORTE_DB
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: db_norte
+    ports:
+      - "3307:3306" 
+    networks:
+      - red_distribuida
+
+  # ---------------------------------------------------------
+  # NODO SUCURSAL SUR
+  # ---------------------------------------------------------
+  nodo_sur_db:
+    image: mariadb:10.6
+    container_name: NODO_SUR_DB
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: db_sur
+    ports:
+      - "3308:3306" 
+    networks:
+      - red_distribuida
+
+  # ---------------------------------------------------------
+  # NODO SUCURSAL CENTRO
+  # ---------------------------------------------------------
+  nodo_centro_db:
+    image: mariadb:10.6
+    container_name: NODO_CENTRO_DB
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: db_centro
+    ports:
+      - "3309:3306" 
+    networks:
+      - red_distribuida
+
+  # ---------------------------------------------------------
+  # SERVIDOR DE APLICACIÓN PHP
+  # ---------------------------------------------------------
+  app_php:
+    build: . 
+    container_name: SERVIDOR_PHP
+    ports:
+      - "8080:80" 
+    volumes:
+      - ./src:/var/www/html 
+    networks:
+      - red_distribuida
+    depends_on:
+      - nodo_matriz_db # <- Dependencia actualizada
+      - nodo_norte_db
+      - nodo_sur_db
+      - nodo_centro_db
+
+# ---------------------------------------------------------
+# RED DOCKER BRIDGE
+# ---------------------------------------------------------
+networks:
+  red_distribuida:
+    driver: bridge
