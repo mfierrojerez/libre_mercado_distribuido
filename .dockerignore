@@ -1,0 +1,19 @@
+.git
+.gitignore
+*.md
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.lintstagedrc.js
+
+# Docker
+.docker/
+Dockerfile*
+docker-compose*.yml
+!docker-compose.override.yml
+
+# IDE
+.idea/
+.vscode/settings.json
+.vscode/tasks.json
