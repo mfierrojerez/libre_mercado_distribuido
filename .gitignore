@@ -1,6 +1,29 @@
-# Archivos del sistema operativo (Mac/Windows)
-.DS_Store
-Thumbs.db
+# Git ignore para SisDist Marketplace
 
-# Logs y temporales
+# Variables de entorno (NO subir credenciales)
+.env
+.env.local
+.env.*.local
+
+# Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Docker
+.docker/
+Dockerfile*
+docker-compose*.yml
+!docker-compose.override.yml
+
+# IDE
+.idea/
+.vscode/settings.json
+.vscode/tasks.json
+
+# Archivos generados
+*.db
+*.sqlite
+*.sql.backup

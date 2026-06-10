@@ -1,0 +1,15 @@
+RewriteEngine On
+
+# Servir archivos estáticos desde /public sin mover el proyecto
+RewriteCond %{REQUEST_URI} ^/(images|css|js|fonts|uploads|favicon\.ico)(/.*)?$ [NC]
+RewriteCond %{DOCUMENT_ROOT}/public%{REQUEST_URI} -f [OR]
+RewriteCond %{DOCUMENT_ROOT}/public%{REQUEST_URI} -d
+RewriteRule ^(.*)$ public/$1 [L]
+
+# Si el archivo o carpeta existe en la raíz, servirlo directo
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Enviar todo lo demás al front controller
+RewriteRule ^ index.php [QSA,L]

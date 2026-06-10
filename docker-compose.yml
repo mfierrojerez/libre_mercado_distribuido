@@ -3,16 +3,17 @@ version: '3.8'
 services:
   # ---------------------------------------------------------
   # NODO MATRIZ (CASA MATRIZ / ADMINISTRACIÓN GLOBAL)
-  # Roles: Tablas Globales, Cuentas de Usuario, Catálogo
   # ---------------------------------------------------------
   nodo_matriz_db:
     image: mariadb:10.6
     container_name: NODO_MATRIZ_DB
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: db_matriz # <- Base de datos renombrada
+      MYSQL_DATABASE: db_matriz
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: apppassword
     ports:
-      - "3306:3306" 
+      - "3306:3306"
     networks:
       - red_distribuida
 
@@ -25,8 +26,10 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_DATABASE: db_norte
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: apppassword
     ports:
-      - "3307:3306" 
+      - "3307:3306"
     networks:
       - red_distribuida
 
@@ -39,8 +42,10 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_DATABASE: db_sur
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: apppassword
     ports:
-      - "3308:3306" 
+      - "3308:3306"
     networks:
       - red_distribuida
 
@@ -53,8 +58,10 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_DATABASE: db_centro
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: apppassword
     ports:
-      - "3309:3306" 
+      - "3309:3306"
     networks:
       - red_distribuida
 
@@ -62,16 +69,50 @@ services:
   # SERVIDOR DE APLICACIÓN PHP
   # ---------------------------------------------------------
   app_php:
-    build: . 
+    build: .
     container_name: SERVIDOR_PHP
     ports:
-      - "8080:80" 
+    - "8080:80"
     volumes:
-      - ./src:/var/www/html 
+    - ./src:/var/www/html
+    env_file:
+    - .env
+    environment:
+      NODE_TYPE: ${NODE_TYPE}
+      DB_HOST: ${DB_HOST}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_MATRIZ_HOST: ${DB_MATRIZ_HOST}
+      DB_HOST_NORTE: ${DB_HOST_NORTE}
+      DB_HOST_SUR: ${DB_HOST_SUR}
+      DB_HOST_CENTRO: ${DB_HOST_CENTRO}
+      DEFAULT_SUCURSAL_ID: ${DEFAULT_SUCURSAL_ID}
     networks:
       - red_distribuida
     depends_on:
-      - nodo_matriz_db # <- Dependencia actualizada
+      - nodo_matriz_db
+      - nodo_norte_db
+      - nodo_sur_db
+      - nodo_centro_db
+
+  # ---------------------------------------------------------
+  # PHPMYADMIN - Administrador Web de Bases de Datos
+  # ---------------------------------------------------------
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: PHPMYADMIN
+    ports:
+      - "8081:80"
+    environment:
+      PMA_ARBITRARY: 1
+      PMA_HOSTS: nodo_matriz_db,nodo_norte_db,nodo_sur_db,nodo_centro_db
+      PMA_USER: root
+      PMA_PASSWORD: rootpassword
+    networks:
+      - red_distribuida
+    depends_on:
+      - nodo_matriz_db
       - nodo_norte_db
       - nodo_sur_db
       - nodo_centro_db
