@@ -61,9 +61,21 @@ $pageTitle = 'Carrito de Compras - SisDist Marketplace';
                     data-id="<?php echo e($itemId); ?>"
                     data-total="<?php echo e((string) $subtotalItem); ?>"
                 >
-                    <div class="item-image">
-                        <div class="no-image-placeholder">Sin imagen</div>
-                    </div>
+                    <?php
+    $skuFile = trim($sku);
+    $skuFile = preg_replace('/[^a-z0-9\-]+/i', '-', $skuFile);
+    $skuFile = trim($skuFile, '-');
+
+    $imageFs  = __DIR__ . '/../../public/images/' . $skuFile . '.jpg';
+    $imageUrl = '/images/' . $skuFile . '.jpg';
+?>
+<div class="item-image">
+    <?php if (is_file($imageFs)): ?>
+        <img src="<?php echo e($imageUrl); ?>" alt="<?php echo e($nombre); ?>" class="product-image">
+    <?php else: ?>
+        <div class="no-image-placeholder">Sin imagen</div>
+    <?php endif; ?>
+</div>
 
                     <div class="item-details">
                         <h3><?php echo e($nombre); ?></h3>

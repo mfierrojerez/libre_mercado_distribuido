@@ -2,8 +2,7 @@
 $producto = $producto ?? null;
 $pageTitle = 'Detalle de Producto - ' . ($producto['nombre'] ?? 'Producto');
 
-if (!$producto):
-?>
+if (!$producto): ?>
     <div class="error-message">
         <h2>Producto no encontrado</h2>
         <a href="<?php echo e(url('products')); ?>" class="btn btn-secondary">Volver a productos</a>
@@ -12,22 +11,18 @@ if (!$producto):
     return;
 endif;
 
-$nombre           = $producto['nombre'] ?? 'Producto sin nombre';
-$sku              = $producto['sku'] ?? 'Sin SKU';
-$descripcion      = $producto['descripcion'] ?? '';
-$pesoGramos       = $producto['peso_gramos'] ?? null;
-$precioEfectivo   = isset($producto['precio_efectivo']) ? (int) $producto['precio_efectivo'] : null;
-$precioTarjeta    = isset($producto['precio_tarjeta']) ? (int) $producto['precio_tarjeta'] : null;
-$stockTotal       = isset($producto['stock_total']) ? (int) $producto['stock_total'] : 0;
-$stockSucursales  = $producto['stock_por_sucursal'] ?? [];
-$preciosOtros     = $precios_otros ?? [];
+$nombre          = $producto['nombre'] ?? 'Producto sin nombre';
+$sku             = $producto['sku'] ?? 'Sin SKU';
+$descripcion     = $producto['descripcion'] ?? '';
+$pesoGramos      = $producto['peso_gramos'] ?? null;
+$precioEfectivo  = isset($producto['precio_efectivo']) ? (int) $producto['precio_efectivo'] : null;
+$precioTarjeta   = isset($producto['precio_tarjeta']) ? (int) $producto['precio_tarjeta'] : null;
+$stockTotal      = isset($producto['stock_total']) ? (int) $producto['stock_total'] : 0;
+$stockSucursales = $producto['stock_por_sucursal'] ?? [];
+$preciosOtros    = $precios_otros ?? [];
 
-/**
- * Elegir primera sucursal con stock > 0 como default para el form.
- */
 $defaultSucursalId = '';
 $defaultMaxQty = 0;
-
 foreach ($stockSucursales as $stockInfo) {
     $cantidad = (int) ($stockInfo['cantidad'] ?? 0);
     if ($cantidad > 0) {
@@ -36,6 +31,13 @@ foreach ($stockSucursales as $stockInfo) {
         break;
     }
 }
+
+$skuFile = trim((string) $sku);
+$skuFile = preg_replace('/[^a-z0-9\-]+/i', '-', $skuFile);
+$skuFile = trim($skuFile, '-');
+$imageFs = dirname(__DIR__, 2) . '/public/images/' . $skuFile . '.jpg';
+$imageUrl = '/images/' . $skuFile . '.jpg';
+$hasImage = is_file($imageFs);
 ?>
 
 <?php if (!empty($_SESSION['flash_error'])): ?>
@@ -61,7 +63,11 @@ foreach ($stockSucursales as $stockInfo) {
 
     <div class="product-detail-grid">
         <div class="product-images">
-            <div class="no-image-placeholder">Sin imagen</div>
+            <?php if ($hasImage): ?>
+                <img src="<?php echo e($imageUrl); ?>" alt="<?php echo e($nombre); ?>" class="product-main-image">
+            <?php else: ?>
+                <div class="no-image-placeholder">Sin imagen</div>
+            <?php endif; ?>
         </div>
 
         <div class="product-info">
@@ -108,13 +114,11 @@ foreach ($stockSucursales as $stockInfo) {
             <?php if (!empty($stockSucursales)): ?>
                 <section class="stock-by-branch">
                     <h3>Disponibilidad por sucursal</h3>
-
                     <div class="branch-stock-list">
                         <?php foreach ($stockSucursales as $stockInfo): ?>
                             <?php
-                                $sucursalId = (string) ($stockInfo['sucursal_id'] ?? '');
-                                $sucursal   = $stockInfo['sucursal'] ?? ucfirst((string) ($stockInfo['node'] ?? 'Sucursal'));
-                                $cantidad   = (int) ($stockInfo['cantidad'] ?? 0);
+                                $sucursal = $stockInfo['sucursal'] ?? ucfirst((string) ($stockInfo['node'] ?? 'Sucursal'));
+                                $cantidad = (int) ($stockInfo['cantidad'] ?? 0);
                             ?>
                             <article class="branch-stock-card">
                                 <h4><?php echo e($sucursal); ?></h4>
@@ -137,10 +141,9 @@ foreach ($stockSucursales as $stockInfo) {
                     <select id="sucursal_id" name="sucursal_id" required>
                         <?php foreach ($stockSucursales as $stockInfo): ?>
                             <?php
-                                $sid      = (string) ($stockInfo['sucursal_id'] ?? '');
+                                $sid = (string) ($stockInfo['sucursal_id'] ?? '');
                                 $sucursal = $stockInfo['sucursal'] ?? ucfirst((string) ($stockInfo['node'] ?? 'Sucursal'));
                                 $cantidad = (int) ($stockInfo['cantidad'] ?? 0);
-
                                 if ($sid === '' || $cantidad <= 0) {
                                     continue;
                                 }
@@ -153,22 +156,16 @@ foreach ($stockSucursales as $stockInfo) {
 
                     <label for="quantity">Cantidad</label>
                     <select id="quantity" name="cantidad" required>
-                        <?php
-                        $max = min($defaultMaxQty, 10);
-                        for ($i = 1; $i <= $max; $i++):
-                        ?>
-                            <option value="<?php echo $i; ?>" <?php echo $i === 1 ? 'selected' : ''; ?>>
-                                <?php echo $i; ?>
-                            </option>
+                        <?php $max = min($defaultMaxQty, 10); ?>
+                        <?php for ($i = 1; $i <= $max; $i++): ?>
+                            <option value="<?php echo $i; ?>" <?php echo $i === 1 ? 'selected' : ''; ?>><?php echo $i; ?></option>
                         <?php endfor; ?>
                     </select>
 
                     <button type="submit" class="btn btn-primary">Agregar al Carrito</button>
                 </form>
             <?php else: ?>
-                <div class="cart-message warning">
-                    Este producto no tiene disponibilidad actual en ninguna sucursal.
-                </div>
+                <div class="cart-message warning">Este producto no tiene disponibilidad actual en ninguna sucursal.</div>
             <?php endif; ?>
 
             <div id="cartMessage"></div>
@@ -178,19 +175,12 @@ foreach ($stockSucursales as $stockInfo) {
     <?php if (!empty($preciosOtros)): ?>
         <section class="other-prices-section">
             <h2>Precios en otras sucursales</h2>
-
             <div class="branch-prices">
                 <?php foreach ($preciosOtros as $fila): ?>
                     <article class="branch-price-card">
                         <h3><?php echo e($fila['sucursal'] ?? 'Sucursal'); ?></h3>
-                        <p>
-                            Efectivo:
-                            <strong>$<?php echo number_format((int) ($fila['precio_efectivo'] ?? 0), 0, ',', '.'); ?></strong>
-                        </p>
-                        <p>
-                            Tarjeta:
-                            <strong>$<?php echo number_format((int) ($fila['precio_tarjeta'] ?? 0), 0, ',', '.'); ?></strong>
-                        </p>
+                        <p>Efectivo: <strong>$<?php echo number_format((int) ($fila['precio_efectivo'] ?? 0), 0, ',', '.'); ?></strong></p>
+                        <p>Tarjeta: <strong>$<?php echo number_format((int) ($fila['precio_tarjeta'] ?? 0), 0, ',', '.'); ?></strong></p>
                     </article>
                 <?php endforeach; ?>
             </div>

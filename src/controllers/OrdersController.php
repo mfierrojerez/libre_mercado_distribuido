@@ -16,42 +16,60 @@ class OrdersController
         $this->clienteId = $_SESSION['cliente_id'] ?? null;
     }
 
-    public function index(): array
-{
-    try {
-        $rol = $_SESSION['rol'] ?? null;
-        $clienteId = $_SESSION['cliente_id'] ?? null;
-
-        if ($rol === 'admin') {
-            $pedidos = getPedidos(null, 100);
-        } elseif ($clienteId !== null) {
-            $pedidos = getPedidos($clienteId, 50);
-        } else {
+    public function index(string $node = ''): array
+    {
+        if (($_SESSION['rol'] ?? '') !== 'admin') {
             return [
-                'success'   => false,
-                'error'     => 'Debes iniciar sesión para ver tus pedidos',
-                'pedidos'   => [],
-                'node_info' => Database::getInstance()->getNodeInfo(),
+                'pedidos' => getPedidos(currentClienteId()),
+                'error' => null,
             ];
         }
 
-        return [
-            'success'   => true,
-            'pedidos'   => $pedidos,
-            'count'     => count($pedidos),
-            'node_info' => Database::getInstance()->getNodeInfo(),
-        ];
-    } catch (Throwable $e) {
-        error_log('[OrdersController::index] ' . $e->getMessage());
+        $node = trim(strtolower($node));
+        $allowed = ['norte', 'sur', 'centro'];
+        if ($node === '' || !in_array($node, $allowed, true)) {
+            $node = strtolower((string) currentNodeType());
+        }
+        if (!in_array($node, $allowed, true)) {
+            $node = 'norte';
+        }
+
+        $pedidos = getPedidosByNode($node, null, 100);
+        if (empty($pedidos)) {
+            try {
+                $pedidos = queryAll(dbSucursal($node), '
+                    SELECT p.*
+                    FROM pedidos p
+                    ORDER BY p.created_at DESC
+                    LIMIT 100
+                ');
+            } catch (Throwable $e) {
+                error_log('[OrdersController] fallback dbSucursal failed: ' . $e->getMessage());
+                $pedidos = [];
+            }
+        }
+
+        $pedidos = array_values(array_filter($pedidos, function (array $pedido) use ($node): bool {
+            foreach (['node', 'nodo', 'sucursal', 'sucursal_origen', 'sucursal_origen_id', 'codigonodo'] as $key) {
+                if (!isset($pedido[$key])) {
+                    continue;
+                }
+                $value = strtolower(trim((string) $pedido[$key]));
+                if ($value === '') {
+                    continue;
+                }
+                if ($value === $node || str_contains($value, $node)) {
+                    return true;
+                }
+            }
+            return true;
+        }));
 
         return [
-            'success'   => false,
-            'error'     => 'Error al obtener pedidos',
-            'pedidos'   => [],
-            'node_info' => Database::getInstance()->getNodeInfo(),
+            'pedidos' => $pedidos,
+            'error' => null,
         ];
     }
-}
 
     public function show(string $orderId): array
     {
@@ -449,5 +467,49 @@ class OrdersController
             error_log('[OrdersController::updateStatus] ' . $e->getMessage());
             return ['success' => false, 'error' => 'Error al actualizar estado'];
         }
+    }
+
+    public function handleUpdateStatusRequest(array $input): void
+    {
+        if (($_SESSION['rol'] ?? '') !== 'admin') {
+            http_response_code(403);
+            $_SESSION['flash_error'] = 'No autorizado';
+            header('Location: ' . url('reviews'));
+            exit;
+        }
+
+        $pedidoId = trim((string) ($input['pedido_id'] ?? ''));
+        $estadoPedido = trim((string) ($input['estado_pedido'] ?? ''));
+        $node = trim(strtolower((string) ($input['node'] ?? '')));
+        $allowed = ['norte', 'sur', 'centro'];
+        if (!in_array($node, $allowed, true)) {
+            $node = strtolower((string) currentNodeType());
+        }
+        if (!in_array($node, $allowed, true)) {
+            $node = 'norte';
+        }
+
+        $allowedStates = ['pendiente', 'confirmado', 'en_camino', 'entregado', 'cancelado'];
+        if ($pedidoId === '' || !in_array($estadoPedido, $allowedStates, true)) {
+            $_SESSION['flash_error'] = 'Datos inválidos para actualizar el pedido';
+            header('Location: ' . url('reviews') . '?node=' . urlencode($node));
+            exit;
+        }
+
+        try {
+            $stmt = dbSucursal($node)->prepare('
+                UPDATE pedidos
+                SET estado_pedido = :estado
+                WHERE id = :id
+            ');
+            $stmt->execute([':estado' => $estadoPedido, ':id' => $pedidoId]);
+            $_SESSION['flash_success'] = $stmt->rowCount() > 0 ? 'Estado del pedido actualizado correctamente' : 'No se pudo actualizar el pedido';
+        } catch (Throwable $e) {
+            error_log('[OrdersController] ' . $e->getMessage());
+            $_SESSION['flash_error'] = 'Error al actualizar el pedido';
+        }
+
+        header('Location: ' . url('reviews') . '?node=' . urlencode($node));
+        exit;
     }
 }

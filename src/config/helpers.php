@@ -315,6 +315,30 @@ function getStockProductoPorSucursal(string $productoId): array
     return $result;
 }
 
+function getStockProductoInventario(string $productoId, string $node): int
+{
+    $node = strtolower(trim($node));
+    if (!in_array($node, ['norte', 'sur', 'centro'], true)) {
+        return 0;
+    }
+
+    try {
+        $row = queryOne(dbSucursal($node), '
+            SELECT cantidad_real
+            FROM stock
+            WHERE producto_id = :pid
+            LIMIT 1
+        ', [
+            ':pid' => $productoId,
+        ]);
+
+        return (int) ($row['cantidad_real'] ?? 0);
+    } catch (Throwable $e) {
+        error_log('[getStockProductoInventario][' . $node . '] ' . $e->getMessage());
+        return 0;
+    }
+}
+
 function getStockTotalProducto(string $productoId): int
 {
     $stocks = getStockProductoPorSucursal($productoId);
@@ -659,7 +683,7 @@ function asset(string $path): string
 
 function image_asset(string $path): string
 {
-    return url('images/' . ltrim($path, '/'));
+    return url(ltrim($path, '/'));
 }
 
 function jsonForHtml(mixed $value): string
