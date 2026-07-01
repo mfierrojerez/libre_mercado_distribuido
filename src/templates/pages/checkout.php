@@ -190,6 +190,40 @@ $pageTitle = 'Checkout - SisDist Marketplace';
 
             tipoEntrega.addEventListener('change', updateCheckoutState);
             updateCheckoutState();
+
+            const form = document.getElementById('checkoutForm');
+            if (form) {
+                form.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    
+                    const btn = form.querySelector('button[type="submit"]');
+                    const oldText = btn.textContent;
+                    btn.textContent = 'Cargando...';
+                    btn.disabled = true;
+
+                    fetch(form.action, {
+                        method: 'POST',
+                        headers: { 'Accept': 'application/json' },
+                        body: new FormData(form)
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert(data.message || 'Pedido confirmado');
+                            window.location.href = '<?= e(url("reviews")) ?>';
+                        } else {
+                            alert(data.error || 'Error al confirmar');
+                            btn.textContent = oldText;
+                            btn.disabled = false;
+                        }
+                    })
+                    .catch(err => {
+                        alert('Error de conexión');
+                        btn.textContent = oldText;
+                        btn.disabled = false;
+                    });
+                });
+            }
         })();
     </script>
 <?php endif; ?>

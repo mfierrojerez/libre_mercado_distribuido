@@ -141,12 +141,30 @@ class OrdersController
         }
     }
 
+    private function isAjax(): bool
+    {
+        return (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false)
+            || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest');
+    }
+
     public function handleCreateRequest(array $input): void
     {
         $tipoEntrega = (string) ($input['tipo_entrega'] ?? '');
         $direccionId = trim((string) ($input['direccion_despacho_id'] ?? ''));
 
         $resultado = $this->create($tipoEntrega, $direccionId !== '' ? $direccionId : null);
+
+        if ($this->isAjax()) {
+            ob_clean();
+            header('Content-Type: application/json');
+            if (!empty($resultado['success'])) {
+                echo json_encode(['success' => true, 'message' => $resultado['message'] ?? 'Pedido creado correctamente']);
+            } else {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => $resultado['error'] ?? 'No se pudo crear el pedido']);
+            }
+            exit;
+        }
 
         if (!empty($resultado['success'])) {
             $_SESSION['flash_success'] = $resultado['message'] ?? 'Pedido creado correctamente';
@@ -160,277 +178,161 @@ class OrdersController
     }
 
     public function create(string $tipoEntrega, ?string $direccionDespachoId = null): array
-{
-    error_log('[OrdersController::create] INICIO cliente=' . ($this->clienteId ?? 'null') .
-        ' tipo_entrega=' . $tipoEntrega .
-        ' direccion=' . ($direccionDespachoId ?? 'null'));
-
-    if ($this->clienteId === null) {
-        error_log('[OrdersController::create] cliente no autenticado');
-        return ['success' => false, 'error' => 'Debes iniciar sesión para crear un pedido'];
-    }
-
-    if (!in_array($tipoEntrega, ['retiro_tienda', 'despacho_domicilio'], true)) {
-        error_log('[OrdersController::create] tipo_entrega invalido=' . $tipoEntrega);
-        return ['success' => false, 'error' => 'Tipo de entrega no válido'];
-    }
-
-    if ($tipoEntrega === 'despacho_domicilio' && empty($direccionDespachoId)) {
-        error_log('[OrdersController::create] falta direccion para despacho');
-        return ['success' => false, 'error' => 'Debes seleccionar una dirección de despacho'];
-    }
-
-    $sessionToken = $_SESSION['cart_token'] ?? null;
-    $carrito = getCarrito($sessionToken, $this->clienteId);
-
-    error_log('[OrdersController::create] carrito_id=' . ($carrito['carrito_id'] ?? 'null') .
-        ' items=' . count($carrito['items'] ?? []));
-
-    if (empty($carrito['items'])) {
-        error_log('[OrdersController::create] carrito vacio');
-        return ['success' => false, 'error' => 'El carrito está vacío'];
-    }
-
-    $grupos = [];
-    foreach ($carrito['items'] as $item) {
-        $sucursalId = (string) ($item['sucursal_id'] ?? '');
-
-        if ($sucursalId === '') {
-            error_log('[OrdersController::create] item sin sucursal=' . json_encode($item));
-            return ['success' => false, 'error' => 'Hay items sin sucursal asignada'];
+    {
+        if ($this->clienteId === null) {
+            return ['success' => false, 'error' => 'Debes iniciar sesión'];
         }
 
-        $grupos[$sucursalId][] = $item;
-    }
+        $carrito = getCarrito($_SESSION['cart_token'] ?? null, $this->clienteId);
+        if (empty($carrito['items'])) {
+            return ['success' => false, 'error' => 'El carrito está vacío'];
+        }
 
-    error_log('[OrdersController::create] grupos=' . json_encode(array_keys($grupos)));
+        $grupos = [];
+        foreach ($carrito['items'] as $item) {
+            $grupos[$item['sucursal_id']][] = $item;
+        }
 
-    $matrizPdo = dbMatriz();
-    $openedTransactions = [];
-    $pedidosCreados = [];
-    $totalGlobal = 0;
-    $despachoPendiente = ($tipoEntrega === 'despacho_domicilio') ? 3990 : 0;
+        $matrizPdo = dbMatriz();
+        $pedidosCreados = [];
+        $totalGlobal = 0;
+        $despachoPendiente = ($tipoEntrega === 'despacho_domicilio') ? 3990 : 0;
 
-    try {
-        error_log('[OrdersController::create] beginTransaction matriz');
-        $matrizPdo->beginTransaction();
-
-        foreach ($grupos as $sucursalId => $itemsSucursal) {
-            $sucursal = getBranchById($sucursalId);
-
-            if ($sucursal === null) {
-                throw new RuntimeException("Sucursal inválida: {$sucursalId}");
-            }
-
-            $node = $sucursal['codigo_nodo'] ?? null;
-            error_log('[OrdersController::create] sucursal=' . $sucursalId .
-                ' nombre=' . ($sucursal['nombre'] ?? 'null') .
-                ' node=' . ($node ?? 'null'));
-
-            if (!$node) {
-                throw new RuntimeException("La sucursal {$sucursalId} no tiene codigo_nodo");
-            }
-
-            $pdo = dbSucursal($node);
-
-            if (!isset($openedTransactions[$node]) && !$pdo->inTransaction()) {
-                error_log('[OrdersController::create] beginTransaction nodo=' . $node);
-                $pdo->beginTransaction();
-                $openedTransactions[$node] = $pdo;
-            }
-
-            $totalProductos = 0;
-            $detalleItems = [];
-
-            foreach ($itemsSucursal as $item) {
-                $productoId = (string) $item['producto_id'];
-                $cantidad   = (int) $item['cantidad'];
-
-                $stock = queryOne($pdo, '
-                    SELECT cantidad_real
-                    FROM stock
-                    WHERE producto_id = :pid AND sucursal_id = :sid
-                    LIMIT 1
-                ', [
-                    ':pid' => $productoId,
-                    ':sid' => $sucursalId,
-                ]);
-
-                $stockDisponible = (int) ($stock['cantidad_real'] ?? 0);
-
-                $precio = queryOne($matrizPdo, '
-                    SELECT precio_efectivo
-                    FROM precios_sucursal
-                    WHERE producto_id = :pid AND sucursal_id = :sid
-                    LIMIT 1
-                ', [
-                    ':pid' => $productoId,
-                    ':sid' => $sucursalId,
-                ]);
-
-                $precioUnitario = (int) ($precio['precio_efectivo'] ?? 0);
-
-                error_log('[OrdersController::create] producto=' . $productoId .
-                    ' sucursal=' . $sucursalId .
-                    ' qty=' . $cantidad .
-                    ' stock=' . $stockDisponible .
-                    ' precio=' . $precioUnitario);
-
-                if ($stockDisponible < $cantidad) {
-                    throw new RuntimeException('Stock insuficiente para un producto en la sucursal seleccionada');
+        try {
+            foreach ($grupos as $sucursalId => $itemsSucursal) {
+                $sucursal = getBranchById($sucursalId);
+                $node = $sucursal['codigo_nodo'] ?? null;
+                
+                if (!$node) {
+                    throw new RuntimeException("La sucursal {$sucursalId} no tiene codigo_nodo");
                 }
 
-                if ($precioUnitario <= 0) {
-                    throw new RuntimeException("Precio inválido para producto {$productoId} en sucursal {$sucursalId}");
+                $pedidoId = generateUuid();
+                $numeroOrden = 'ORD-' . strtoupper(substr($pedidoId, 0, 8));
+                $totalDespachoPedido = $despachoPendiente;
+                $despachoPendiente = 0;
+                
+                $totalProductos = 0;
+                $itemsWithPrices = [];
+                
+                foreach ($itemsSucursal as $item) {
+                    $precio = queryOne($matrizPdo, '
+                        SELECT precio_efectivo FROM precios_sucursal
+                        WHERE producto_id = :pid AND sucursal_id = :sid LIMIT 1
+                    ', [':pid' => $item['producto_id'], ':sid' => $sucursalId]);
+                    
+                    $precioUnitario = (int) ($precio['precio_efectivo'] ?? 0);
+                    
+                    if ($precioUnitario <= 0) {
+                        throw new RuntimeException("Precio inválido para producto {$item['producto_id']} en sucursal {$sucursalId}");
+                    }
+                    
+                    $totalProductos += $precioUnitario * $item['cantidad'];
+                    
+                    $itemsWithPrices[] = [
+                        'carrito_item_id' => $item['id'],
+                        'producto_id'     => $item['producto_id'],
+                        'cantidad'        => $item['cantidad'],
+                        'precio_unitario' => $precioUnitario
+                    ];
+                }
+                
+                $totalPagado = $totalProductos + $totalDespachoPedido;
+                $nodoOffline = false;
+
+                try {
+                    $pdo = dbSucursal($node);
+
+                    foreach ($itemsWithPrices as $item) {
+                        $stmt = $pdo->prepare('CALL sp_actualizar_stock(:pid, :sid, :qty, @success)');
+                        $stmt->execute([
+                            ':pid' => $item['producto_id'],
+                            ':sid' => $sucursalId,
+                            ':qty' => $item['cantidad']
+                        ]);
+                        
+                        $res = $pdo->query('SELECT @success AS success')->fetch(PDO::FETCH_ASSOC);
+                        if (!$res || $res['success'] == 0) {
+                            throw new RuntimeException('Stock insuficiente para un producto en la sucursal seleccionada');
+                        }
+                    }
+                } catch (Exception $e) {
+                    if (strpos($e->getMessage(), 'Stock insuficiente') !== false || strpos($e->getMessage(), 'Precio inválido') !== false) {
+                        throw $e;
+                    }
+                    
+                    error_log('[OrdersController::create] fallback AP para nodo ' . $node . ': ' . $e->getMessage());
+                    $nodoOffline = true;
+                    $numeroOrden = 'SYNC-' . strtoupper(substr($pedidoId, 0, 8));
                 }
 
-                $totalProductos += $precioUnitario * $cantidad;
+                foreach ($itemsWithPrices as $item) {
+                    $detalleId = generateUuid();
+                    
+                    $stmtMatriz = $matrizPdo->prepare('CALL sp_realizar_compra(
+                        :ped_id, :cli_id, :num_ord, :suc_origen, :dir_despacho, :tipo_entrega, :estado,
+                        :tot_prod, :tot_despacho, :tot_pagado,
+                        :det_id, :prod_id, :qty, :precio,
+                        :carrito_id, :nodo_offline
+                    )');
+                    
+                    $stmtMatriz->execute([
+                        ':ped_id'       => $pedidoId,
+                        ':cli_id'       => $this->clienteId,
+                        ':num_ord'      => $numeroOrden,
+                        ':suc_origen'   => $sucursalId,
+                        ':dir_despacho' => $direccionDespachoId,
+                        ':tipo_entrega' => $tipoEntrega,
+                        ':estado'       => 'pendiente',
+                        ':tot_prod'     => $totalProductos,
+                        ':tot_despacho' => $totalDespachoPedido,
+                        ':tot_pagado'   => $totalPagado,
+                        
+                        ':det_id'       => $detalleId,
+                        ':prod_id'      => $item['producto_id'],
+                        ':qty'          => $item['cantidad'],
+                        ':precio'       => $item['precio_unitario'],
+                        
+                        ':carrito_id'   => $item['carrito_item_id'],
+                        ':nodo_offline' => $nodoOffline ? 1 : 0
+                    ]);
+                }
 
-                $detalleItems[] = [
-                    'producto_id'     => $productoId,
-                    'cantidad'        => $cantidad,
-                    'precio_unitario' => $precioUnitario,
+                $pedidosCreados[] = [
+                    'pedido_id'    => $pedidoId,
+                    'numero_orden' => $numeroOrden,
+                    'sucursal_id'  => $sucursalId,
+                    'sucursal'     => $sucursal['nombre'] ?? 'Sucursal',
+                    'node'         => $node,
+                    'total_pagado' => $totalPagado,
                 ];
+
+                $totalGlobal += $totalPagado;
             }
 
-            $pedidoId = generateUuid();
-            $numeroOrden = 'ORD-' . strtoupper(substr($pedidoId, 0, 8));
-            $totalDespachoPedido = $despachoPendiente;
-            $despachoPendiente = 0;
-            $totalPagado = $totalProductos + $totalDespachoPedido;
-
-            error_log('[OrdersController::create] insert pedido id=' . $pedidoId .
-                ' numero=' . $numeroOrden .
-                ' total_productos=' . $totalProductos .
-                ' despacho=' . $totalDespachoPedido .
-                ' total_pagado=' . $totalPagado);
-
-            $pdo->prepare('
-                INSERT INTO pedidos
-                    (id, cliente_id, numero_orden, sucursal_origen_id, direccion_despacho_id,
-                     tipo_entrega, estado_pedido, total_productos, total_despacho, total_pagado)
-                VALUES
-                    (:id, :cid, :num, :suc, :dir,
-                     :tipo, :estado, :tp, :td, :tpag)
-            ')->execute([
-                ':id'     => $pedidoId,
-                ':cid'    => $this->clienteId,
-                ':num'    => $numeroOrden,
-                ':suc'    => $sucursalId,
-                ':dir'    => $direccionDespachoId,
-                ':tipo'   => $tipoEntrega,
-                ':estado' => 'pendiente',
-                ':tp'     => $totalProductos,
-                ':td'     => $totalDespachoPedido,
-                ':tpag'   => $totalPagado,
-            ]);
-
-            foreach ($detalleItems as $detalle) {
-                error_log('[OrdersController::create] insert detalle pedido=' . $pedidoId .
-                    ' producto=' . $detalle['producto_id'] .
-                    ' qty=' . $detalle['cantidad'] .
-                    ' precio=' . $detalle['precio_unitario']);
-
-                $pdo->prepare('
-                    INSERT INTO detalle_pedidos
-                        (id, pedido_id, producto_id, cantidad, precio_unitario_pagado)
-                    VALUES
-                        (:id, :ped, :prod, :qty, :precio)
-                ')->execute([
-                    ':id'     => generateUuid(),
-                    ':ped'    => $pedidoId,
-                    ':prod'   => $detalle['producto_id'],
-                    ':qty'    => $detalle['cantidad'],
-                    ':precio' => $detalle['precio_unitario'],
+            if (!empty($carrito['carrito_id'])) {
+                $matrizPdo->prepare('DELETE FROM carrito WHERE id = :id')->execute([
+                    ':id' => $carrito['carrito_id']
                 ]);
-
-                $updated = $pdo->prepare('
-                    UPDATE stock
-                    SET cantidad_real = cantidad_real - :qty_discount
-                    WHERE producto_id = :pid
-                    AND sucursal_id = :sid
-                    AND cantidad_real >= :qty_check
-                ');
-
-                $updated->execute([
-                    ':qty_discount' => $detalle['cantidad'],
-                    ':qty_check'    => $detalle['cantidad'],
-                    ':pid'          => $detalle['producto_id'],
-                    ':sid'          => $sucursalId,
-                ]);
-
-                error_log('[OrdersController::create] update stock producto=' . $detalle['producto_id'] .
-                    ' sucursal=' . $sucursalId .
-                    ' rowCount=' . $updated->rowCount());
-
-                if ($updated->rowCount() === 0) {
-                    throw new RuntimeException('No fue posible descontar stock de forma segura');
-                }
             }
 
-            $pedidosCreados[] = [
-                'pedido_id'    => $pedidoId,
-                'numero_orden' => $numeroOrden,
-                'sucursal_id'  => $sucursalId,
-                'sucursal'     => $sucursal['nombre'] ?? 'Sucursal',
-                'node'         => $node,
-                'total_pagado' => $totalPagado,
+            return [
+                'success'          => true,
+                'message'          => 'Pedido creado correctamente',
+                'pedidos_creados'  => $pedidosCreados,
+                'total_pagado'     => $totalGlobal,
+                'cantidad_pedidos' => count($pedidosCreados),
+                'node_info'        => Database::getInstance()->getNodeInfo(),
             ];
+        } catch (Throwable $e) {
+            error_log('[OrdersController::create][ERROR] ' . $e->getMessage());
 
-            $totalGlobal += $totalPagado;
+            return [
+                'success' => false,
+                'error'   => 'Error al crear el pedido: ' . $e->getMessage(),
+            ];
         }
-
-        if (!empty($carrito['carrito_id'])) {
-            error_log('[OrdersController::create] delete carrito_items carrito_id=' . $carrito['carrito_id']);
-            $stmt = $matrizPdo->prepare('DELETE FROM carrito_items WHERE carrito_id = :cid');
-            $stmt->execute([':cid' => $carrito['carrito_id']]);
-            error_log('[OrdersController::create] delete carrito_items rowCount=' . $stmt->rowCount());
-        }
-
-        foreach ($openedTransactions as $nodeName => $pdo) {
-            if ($pdo->inTransaction()) {
-                error_log('[OrdersController::create] commit nodo=' . $nodeName);
-                $pdo->commit();
-            }
-        }
-
-        if ($matrizPdo->inTransaction()) {
-            error_log('[OrdersController::create] commit matriz');
-            $matrizPdo->commit();
-        }
-
-        error_log('[OrdersController::create] SUCCESS pedidos=' . count($pedidosCreados) .
-            ' total=' . $totalGlobal);
-
-        return [
-            'success'          => true,
-            'message'          => 'Pedido creado correctamente',
-            'pedidos_creados'  => $pedidosCreados,
-            'total_pagado'     => $totalGlobal,
-            'cantidad_pedidos' => count($pedidosCreados),
-            'node_info'        => Database::getInstance()->getNodeInfo(),
-        ];
-    } catch (Throwable $e) {
-        foreach ($openedTransactions as $nodeName => $pdo) {
-            if ($pdo->inTransaction()) {
-                error_log('[OrdersController::create] rollback nodo=' . $nodeName);
-                $pdo->rollBack();
-            }
-        }
-
-        if ($matrizPdo->inTransaction()) {
-            error_log('[OrdersController::create] rollback matriz');
-            $matrizPdo->rollBack();
-        }
-
-        error_log('[OrdersController::create][ERROR] ' . $e->getMessage());
-
-        return [
-            'success' => false,
-            'error'   => 'Error al crear el pedido: ' . $e->getMessage(),
-        ];
     }
-}
 
     public function updateStatus(string $orderId, string $estado): array
     {

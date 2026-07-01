@@ -187,3 +187,54 @@ $hasImage = is_file($imageFs);
         </section>
     <?php endif; ?>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    function showToast(msg, isError = false) {
+        const toast = document.createElement('div');
+        toast.textContent = msg;
+        toast.style.position = 'fixed';
+        toast.style.bottom = '20px';
+        toast.style.right = '20px';
+        toast.style.padding = '15px';
+        toast.style.background = isError ? '#f44336' : '#4CAF50';
+        toast.style.color = 'white';
+        toast.style.borderRadius = '5px';
+        toast.style.zIndex = '9999';
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+    }
+
+    const form = document.querySelector('.add-to-cart-form');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const btn = form.querySelector('button[type="submit"]');
+            const oldText = btn.textContent;
+            btn.textContent = 'Agregando...';
+            btn.disabled = true;
+
+            fetch(form.action, {
+                method: 'POST',
+                headers: { 'Accept': 'application/json' },
+                body: new FormData(form)
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    showToast(data.message || 'Agregado al carrito');
+                } else {
+                    showToast(data.error || 'Error al agregar', true);
+                }
+            })
+            .catch(err => {
+                showToast('Error de conexión', true);
+            })
+            .finally(() => {
+                btn.textContent = oldText;
+                btn.disabled = false;
+            });
+        });
+    }
+});
+</script>

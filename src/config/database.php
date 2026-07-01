@@ -104,6 +104,14 @@ class Database
             throw new Exception("Nodo [{$node}] no reconocido.");
         }
 
+        $statesFile = __DIR__ . '/node_states.json';
+        if (is_file($statesFile)) {
+            $states = json_decode(file_get_contents($statesFile), true) ?: [];
+            if (isset($states[$node]) && $states[$node] === 'OFFLINE') {
+                throw new Exception("Simulación: Nodo [{$node}] no disponible.");
+            }
+        }
+
         $connection = $this->nodeConnections[$node] ?? null;
 
         if ($connection === null) {
@@ -126,10 +134,20 @@ class Database
 
     public function getAvailableNodes(): array
     {
-        return array_filter(
-            $this->nodeConnections,
-            fn($connection) => $connection instanceof PDO
-        );
+        $available = [];
+        $statesFile = __DIR__ . '/node_states.json';
+        $states = is_file($statesFile) ? (json_decode(file_get_contents($statesFile), true) ?: []) : [];
+
+        foreach ($this->nodeConnections as $node => $connection) {
+            if ($connection instanceof PDO) {
+                if (isset($states[$node]) && $states[$node] === 'OFFLINE') {
+                    continue;
+                }
+                $available[$node] = $connection;
+            }
+        }
+        
+        return $available;
     }
 
     public function getNodeInfo(): array

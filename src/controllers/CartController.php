@@ -30,6 +30,12 @@ class CartController
         return $_SESSION['cart_token'];
     }
 
+    private function isAjax(): bool
+    {
+        return (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false)
+            || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest');
+    }
+
     public function handleAddRequest(array $input): void
     {
         $productoId = (string) ($input['producto_id'] ?? '');
@@ -38,6 +44,18 @@ class CartController
 
         $resultado = $this->add($productoId, $sucursalId, $cantidad);
 
+        if ($this->isAjax()) {
+            ob_clean();
+            header('Content-Type: application/json');
+            if (!empty($resultado['success'])) {
+                echo json_encode(['success' => true, 'message' => $resultado['message'] ?? 'Producto agregado al carrito']);
+            } else {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => $resultado['error'] ?? 'No se pudo agregar el producto']);
+            }
+            exit;
+        }
+
         if (!empty($resultado['success'])) {
             $_SESSION['flash_success'] = $resultado['message'] ?? 'Producto agregado al carrito';
             header('Location: ' . url('cart'));
@@ -45,11 +63,9 @@ class CartController
         }
 
         $_SESSION['flash_error'] = $resultado['error'] ?? 'No se pudo agregar el producto al carrito';
-error_log('[CartController::handleAddRequest] ' . $_SESSION['flash_error']);
-header('Location: ' . url('products/' . $productoId));
-exit;
-
-
+        error_log('[CartController::handleAddRequest] ' . $_SESSION['flash_error']);
+        header('Location: ' . url('products/' . $productoId));
+        exit;
     }
 
     public function handleUpdateRequest(array $input): void
@@ -58,6 +74,18 @@ exit;
         $cantidad = (int) ($input['cantidad'] ?? 1);
 
         $resultado = $this->update($itemId, $cantidad);
+
+        if ($this->isAjax()) {
+            ob_clean();
+            header('Content-Type: application/json');
+            if (!empty($resultado['success'])) {
+                echo json_encode(['success' => true, 'message' => $resultado['message'] ?? 'Carrito actualizado']);
+            } else {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => $resultado['error'] ?? 'No se pudo actualizar el carrito']);
+            }
+            exit;
+        }
 
         $_SESSION['flash_' . (!empty($resultado['success']) ? 'success' : 'error')] =
             $resultado['message'] ?? $resultado['error'] ?? 'No se pudo actualizar el carrito';
@@ -72,6 +100,18 @@ exit;
 
         $resultado = $this->remove($itemId);
 
+        if ($this->isAjax()) {
+            ob_clean();
+            header('Content-Type: application/json');
+            if (!empty($resultado['success'])) {
+                echo json_encode(['success' => true, 'message' => $resultado['message'] ?? 'Producto eliminado']);
+            } else {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => $resultado['error'] ?? 'No se pudo eliminar el producto']);
+            }
+            exit;
+        }
+
         $_SESSION['flash_' . (!empty($resultado['success']) ? 'success' : 'error')] =
             $resultado['message'] ?? $resultado['error'] ?? 'No se pudo eliminar el producto';
 
@@ -82,6 +122,18 @@ exit;
     public function handleClearRequest(): void
     {
         $resultado = $this->clear();
+
+        if ($this->isAjax()) {
+            ob_clean();
+            header('Content-Type: application/json');
+            if (!empty($resultado['success'])) {
+                echo json_encode(['success' => true, 'message' => $resultado['message'] ?? 'Carrito vaciado']);
+            } else {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => $resultado['error'] ?? 'No se pudo vaciar el carrito']);
+            }
+            exit;
+        }
 
         $_SESSION['flash_' . (!empty($resultado['success']) ? 'success' : 'error')] =
             $resultado['message'] ?? $resultado['error'] ?? 'No se pudo vaciar el carrito';

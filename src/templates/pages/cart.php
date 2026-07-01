@@ -165,4 +165,58 @@ $pageTitle = 'Carrito de Compras - SisDist Marketplace';
             </div>
         </aside>
     </div>
+    
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        function showToast(msg, isError = false) {
+            const toast = document.createElement('div');
+            toast.textContent = msg;
+            toast.style.position = 'fixed';
+            toast.style.bottom = '20px';
+            toast.style.right = '20px';
+            toast.style.padding = '15px';
+            toast.style.background = isError ? '#f44336' : '#4CAF50';
+            toast.style.color = 'white';
+            toast.style.borderRadius = '5px';
+            toast.style.zIndex = '9999';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        document.querySelectorAll('form').forEach(form => {
+            if (form.classList.contains('quantity-form') || form.classList.contains('remove-form') || form.action.includes('clear')) {
+                // Remove inline onsubmit
+                form.onsubmit = null; 
+                form.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    
+                    if (form.classList.contains('remove-form') || form.action.includes('clear')) {
+                        if (!confirm('¿Estás seguro?')) return;
+                    }
+
+                    fetch(form.action, {
+                        method: 'POST',
+                        headers: { 'Accept': 'application/json' },
+                        body: new FormData(form)
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast(data.message);
+                            if (form.classList.contains('remove-form')) {
+                                form.closest('.cart-item').remove();
+                            } else if (form.action.includes('clear')) {
+                                document.querySelector('.cart-items').innerHTML = '<p>Carrito vaciado</p>';
+                                document.querySelector('.summary-table').remove();
+                            }
+                        } else {
+                            showToast(data.error || 'Error', true);
+                        }
+                    })
+                    .catch(err => showToast('Error de red', true));
+                });
+            }
+        });
+    });
+    </script>
 <?php endif; ?>

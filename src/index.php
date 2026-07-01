@@ -105,6 +105,67 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         case 'inventory':
             require_once __DIR__ . '/controllers/InventoryController.php';
             (new InventoryController())->handleAdjustRequest($_POST); break;
+        case 'admin':
+            if (($_SESSION['rol'] ?? '') === 'admin' && ($pathParts[1] ?? '') === 'node-state') {
+                $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+                $node = trim(strtolower((string)($input['node'] ?? '')));
+                $state = trim(strtoupper((string)($input['state'] ?? '')));
+                $allowedNodes = ['norte', 'sur', 'centro'];
+                
+                if (in_array($node, $allowedNodes, true) && in_array($state, ['ONLINE', 'OFFLINE'], true)) {
+                    $statesFile = __DIR__ . '/config/node_states.json';
+                    $states = is_file($statesFile) ? (json_decode(file_get_contents($statesFile), true) ?: []) : [];
+                    $states[$node] = $state;
+                    file_put_contents($statesFile, json_encode($states, JSON_PRETTY_PRINT));
+                    
+                    $msg = "Estado de {$node} cambiado a {$state}";
+
+                    if ($state === 'ONLINE') {
+                        try {
+                            $matriz = dbMatriz();
+                            $stmtSuc = $matriz->prepare('SELECT id FROM sucursales WHERE codigo_nodo = :nodo LIMIT 1');
+                            $stmtSuc->execute([':nodo' => $node]);
+                            $sucursal = $stmtSuc->fetch(PDO::FETCH_ASSOC);
+
+                            if ($sucursal && !empty($sucursal['id'])) {
+                                $sucursalId = $sucursal['id'];
+                                $stmtPendientes = $matriz->prepare('SELECT id, producto_id, cantidad FROM ventas_pendientes_sincronizacion WHERE sucursal_id = :sid');
+                                $stmtPendientes->execute([':sid' => $sucursalId]);
+                                $pendientes = $stmtPendientes->fetchAll(PDO::FETCH_ASSOC);
+
+                                if (!empty($pendientes)) {
+                                    $localPdo = dbSucursal($node);
+                                    foreach ($pendientes as $p) {
+                                        $stmtLocal = $localPdo->prepare('CALL sp_reconstruir_stock(:pid, :qty)');
+                                        $stmtLocal->execute([
+                                            ':pid' => $p['producto_id'],
+                                            ':qty' => $p['cantidad']
+                                        ]);
+
+                                        $stmtDel = $matriz->prepare('DELETE FROM ventas_pendientes_sincronizacion WHERE id = :id');
+                                        $stmtDel->execute([':id' => $p['id']]);
+                                    }
+                                    $msg = "Nodo ONLINE. Inventario sincronizado correctamente.";
+                                }
+                            }
+                        } catch (Exception $e) {
+                            error_log('[Sync Error] ' . $e->getMessage());
+                            $msg .= " (con errores de sincronización)";
+                        }
+                    }
+
+                    ob_clean();
+                    echo json_encode(['success' => true, 'message' => $msg]);
+                    exit;
+                }
+                
+                ob_clean();
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => 'Parámetros inválidos']);
+                exit;
+            }
+            http_response_code(403);
+            exit;
         default:
             http_response_code(405); echo 'Método no permitido'; exit;
     }
