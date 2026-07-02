@@ -48,6 +48,38 @@
         <label style="font-size: 0.8em;">Norte <select class="node-state-select" data-node="norte"><option value="ONLINE" <?= $norteState==='ONLINE'?'selected':''?>>ON</option><option value="OFFLINE" <?= $norteState==='OFFLINE'?'selected':''?>>OFF</option></select></label>
         <label style="font-size: 0.8em;">Sur <select class="node-state-select" data-node="sur"><option value="ONLINE" <?= $surState==='ONLINE'?'selected':''?>>ON</option><option value="OFFLINE" <?= $surState==='OFFLINE'?'selected':''?>>OFF</option></select></label>
         <label style="font-size: 0.8em;">Centro <select class="node-state-select" data-node="centro"><option value="ONLINE" <?= $centroState==='ONLINE'?'selected':''?>>ON</option><option value="OFFLINE" <?= $centroState==='OFFLINE'?'selected':''?>>OFF</option></select></label>
+        
+        <button id="btnSyncReverse" class="btn" style="background:#ffc107; color:#000; border:none; padding:3px 8px; border-radius:3px; font-size:0.8em; cursor:pointer;" onclick="syncReverse()">
+            Sincronizar Ventas Huérfanas
+        </button>
+        <script>
+            function syncReverse() {
+                const btn = document.getElementById('btnSyncReverse');
+                btn.disabled = true;
+                btn.innerText = 'Sincronizando...';
+
+                fetch('<?= e(url("admin/sync-reverse")); ?>', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showToastAdmin(`Sincronización completada. Órdenes: ${data.recovered}`);
+                    } else {
+                        showToastAdmin(`Error: ${data.error}`, true);
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    showToastAdmin('Error en la solicitud.', true);
+                })
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.innerText = 'Sincronizar Ventas Huérfanas';
+                });
+            }
+
         <script>
             function showToastAdmin(msg, isError = false) {
                 const toast = document.createElement('div');

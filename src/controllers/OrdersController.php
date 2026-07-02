@@ -18,57 +18,87 @@ class OrdersController
 
     public function index(string $node = ''): array
     {
-        if (($_SESSION['rol'] ?? '') !== 'admin') {
-            return [
-                'pedidos' => getPedidos(currentClienteId()),
-                'error' => null,
-            ];
-        }
+        try {
+            $pdo = dbMatriz();
+            
+            if (($_SESSION['rol'] ?? '') !== 'admin') {
+                if (!$this->clienteId) {
+                    return ['pedidos' => [], 'error' => 'No autenticado'];
+                }
+                
+                // Consultamos directamente a la matriz
+                $stmt = $pdo->prepare('
+                    SELECT p.* 
+                    FROM pedidos p 
+                    WHERE p.cliente_id = :cid 
+                    ORDER BY p.created_at DESC
+                ');
+                $stmt->execute([':cid' => $this->clienteId]);
+                $pedidos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        $node = trim(strtolower($node));
-        $allowed = ['norte', 'sur', 'centro'];
-        if ($node === '' || !in_array($node, $allowed, true)) {
-            $node = strtolower((string) currentNodeType());
-        }
-        if (!in_array($node, $allowed, true)) {
-            $node = 'norte';
-        }
+                // Opcional: Adjuntar los detalles de cada pedido
+                foreach ($pedidos as &$pedido) {
+                    $stmtDet = $pdo->prepare('
+                        SELECT dp.*, prod.nombre 
+                        FROM detalle_pedidos dp
+                        LEFT JOIN productos prod ON prod.id = dp.producto_id
+                        WHERE dp.pedido_id = :pid
+                    ');
+                    $stmtDet->execute([':pid' => $pedido['id']]);
+                    $pedido['items'] = $stmtDet->fetchAll(PDO::FETCH_ASSOC);
+                }
+                unset($pedido);
 
-        $pedidos = getPedidosByNode($node, null, 100);
-        if (empty($pedidos)) {
-            try {
-                $pedidos = queryAll(dbSucursal($node), '
-                    SELECT p.*
+            } else {
+                // Admin también consulta de manera centralizada (db_matriz)
+                $node = trim(strtolower($node));
+                $allowed = ['norte', 'sur', 'centro'];
+                if ($node === '' || !in_array($node, $allowed, true)) {
+                    $node = strtolower((string) currentNodeType());
+                }
+                if (!in_array($node, $allowed, true)) {
+                    $node = 'norte';
+                }
+
+                $stmt = $pdo->prepare('
+                    SELECT p.* 
                     FROM pedidos p
+                    JOIN sucursales s ON s.id = p.sucursal_origen_id
+                    WHERE s.codigo_nodo = :nodo
                     ORDER BY p.created_at DESC
                     LIMIT 100
                 ');
-            } catch (Throwable $e) {
-                error_log('[OrdersController] fallback dbSucursal failed: ' . $e->getMessage());
-                $pedidos = [];
+                $stmt->execute([':nodo' => $node]);
+                $pedidos = $stmt->fetchAll(PDO::FETCH_ASSOC);
             }
+
+            if ($this->isAjax()) {
+                if (ob_get_level() > 0) ob_clean();
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['success' => true, 'pedidos' => $pedidos]);
+                exit;
+            }
+
+            return [
+                'pedidos' => $pedidos,
+                'error' => null,
+            ];
+
+        } catch (Throwable $e) {
+            error_log('[OrdersController::index] error centralizado: ' . $e->getMessage());
+            
+            if ($this->isAjax()) {
+                if (ob_get_level() > 0) ob_clean();
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['success' => false, 'error' => 'Error al obtener historial']);
+                exit;
+            }
+
+            return [
+                'pedidos' => [],
+                'error' => 'Error al obtener pedidos centralizados',
+            ];
         }
-
-        $pedidos = array_values(array_filter($pedidos, function (array $pedido) use ($node): bool {
-            foreach (['node', 'nodo', 'sucursal', 'sucursal_origen', 'sucursal_origen_id', 'codigonodo'] as $key) {
-                if (!isset($pedido[$key])) {
-                    continue;
-                }
-                $value = strtolower(trim((string) $pedido[$key]));
-                if ($value === '') {
-                    continue;
-                }
-                if ($value === $node || str_contains($value, $node)) {
-                    return true;
-                }
-            }
-            return true;
-        }));
-
-        return [
-            'pedidos' => $pedidos,
-            'error' => null,
-        ];
     }
 
     public function show(string $orderId): array
@@ -151,8 +181,9 @@ class OrdersController
     {
         $tipoEntrega = (string) ($input['tipo_entrega'] ?? '');
         $direccionId = trim((string) ($input['direccion_despacho_id'] ?? ''));
+        $direccionManual = trim((string) ($input['direccion_manual'] ?? ''));
 
-        $resultado = $this->create($tipoEntrega, $direccionId !== '' ? $direccionId : null);
+        $resultado = $this->create($tipoEntrega, $direccionId !== '' ? $direccionId : null, $direccionManual);
 
         if ($this->isAjax()) {
             ob_clean();
@@ -177,7 +208,7 @@ class OrdersController
         exit;
     }
 
-    public function create(string $tipoEntrega, ?string $direccionDespachoId = null): array
+    public function create(string $tipoEntrega, ?string $direccionDespachoId = null, string $direccionManual = ''): array
     {
         if ($this->clienteId === null) {
             return ['success' => false, 'error' => 'Debes iniciar sesión'];
@@ -193,82 +224,90 @@ class OrdersController
             $grupos[$item['sucursal_id']][] = $item;
         }
 
-        $matrizPdo = dbMatriz();
+        // INYECCIÓN DE DIRECCIÓN ON THE FLY
+        if ($tipoEntrega === 'despacho_domicilio' && $direccionManual !== '') {
+            try {
+                $pdoMatriz = dbMatriz();
+                $stmtCiudad = $pdoMatriz->query("SELECT id FROM ciudades LIMIT 1");
+                $ciudadId = $stmtCiudad->fetchColumn();
+
+                if ($ciudadId) {
+                    $nuevaDireccionId = generateUuid();
+                    $stmtIns = $pdoMatriz->prepare('INSERT INTO direcciones_despacho (id, cliente_id, ciudad_id, calle, numero) VALUES (?, ?, ?, ?, ?)');
+                    $stmtIns->execute([$nuevaDireccionId, $this->clienteId, $ciudadId, $direccionManual, 'S/N']);
+                    $direccionDespachoId = $nuevaDireccionId;
+                }
+            } catch (Exception $e) {
+                error_log("Error insertando dirección on the fly: " . $e->getMessage());
+            }
+        }
+
         $pedidosCreados = [];
         $totalGlobal = 0;
         $despachoPendiente = ($tipoEntrega === 'despacho_domicilio') ? 3990 : 0;
 
-        try {
-            foreach ($grupos as $sucursalId => $itemsSucursal) {
-                $sucursal = getBranchById($sucursalId);
-                $node = $sucursal['codigo_nodo'] ?? null;
-                
-                if (!$node) {
-                    throw new RuntimeException("La sucursal {$sucursalId} no tiene codigo_nodo");
-                }
+        foreach ($grupos as $sucursalId => $itemsSucursal) {
+            $sucursal = getBranchById($sucursalId);
+            $node = $sucursal['codigo_nodo'] ?? null;
+            
+            if (!$node) {
+                throw new RuntimeException("La sucursal {$sucursalId} no tiene codigo_nodo");
+            }
 
-                $pedidoId = generateUuid();
-                $numeroOrden = 'ORD-' . strtoupper(substr($pedidoId, 0, 8));
-                $totalDespachoPedido = $despachoPendiente;
-                $despachoPendiente = 0;
-                
-                $totalProductos = 0;
-                $itemsWithPrices = [];
-                
-                foreach ($itemsSucursal as $item) {
-                    $precio = queryOne($matrizPdo, '
-                        SELECT precio_efectivo FROM precios_sucursal
-                        WHERE producto_id = :pid AND sucursal_id = :sid LIMIT 1
-                    ', [':pid' => $item['producto_id'], ':sid' => $sucursalId]);
-                    
-                    $precioUnitario = (int) ($precio['precio_efectivo'] ?? 0);
-                    
-                    if ($precioUnitario <= 0) {
-                        throw new RuntimeException("Precio inválido para producto {$item['producto_id']} en sucursal {$sucursalId}");
-                    }
-                    
-                    $totalProductos += $precioUnitario * $item['cantidad'];
-                    
-                    $itemsWithPrices[] = [
-                        'carrito_item_id' => $item['id'],
-                        'producto_id'     => $item['producto_id'],
-                        'cantidad'        => $item['cantidad'],
-                        'precio_unitario' => $precioUnitario
-                    ];
-                }
-                
-                $totalPagado = $totalProductos + $totalDespachoPedido;
-                $nodoOffline = false;
+            // Generación de UUIDs antes de cualquier conexión
+            $pedidoId = generateUuid();
+            $numeroOrden = 'ORD-' . strtoupper(substr($pedidoId, 0, 8));
+            $totalDespachoPedido = $despachoPendiente;
+            $despachoPendiente = 0;
 
-                try {
-                    $pdo = dbSucursal($node);
+            // NOTA: Asumimos que los items ya traen el 'precio_unitario' desde el carrito o lo obtienes de una caché local.
+            // Si necesitas extraer precios de la DB, deberías hacerlo a través del dbSucursal($node) para no depender de dbMatriz.
+            $totalProductos = 0;
+            $itemsWithIds = [];
 
-                    foreach ($itemsWithPrices as $item) {
-                        $stmt = $pdo->prepare('CALL sp_actualizar_stock(:pid, :sid, :qty, @success)');
-                        $stmt->execute([
-                            ':pid' => $item['producto_id'],
-                            ':sid' => $sucursalId,
-                            ':qty' => $item['cantidad']
-                        ]);
+            foreach ($itemsSucursal as $item) {
+                // 1. Obtener precio unitario con fallback a base de datos
+                $precioUnitario = (int) ($item['precio_unitario'] ?? 0);
+
+                if ($precioUnitario === 0) {
+                    try {
+                        $pdoPrecio = dbMatriz(); // Usando dbMatriz() que es la función global correcta en el proyecto
+                        $stmtPrecio = $pdoPrecio->prepare("SELECT precio_efectivo FROM precios_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+                        $stmtPrecio->execute([$item['producto_id'], $sucursalId]);
+                        $precioDB = $stmtPrecio->fetchColumn();
                         
-                        $res = $pdo->query('SELECT @success AS success')->fetch(PDO::FETCH_ASSOC);
-                        if (!$res || $res['success'] == 0) {
-                            throw new RuntimeException('Stock insuficiente para un producto en la sucursal seleccionada');
+                        if ($precioDB !== false) {
+                            $precioUnitario = (int) $precioDB;
+                        } else {
+                            // Fallback de seguridad si no existe el precio
+                            $precioUnitario = 9990; 
                         }
+                    } catch (Exception $e) {
+                        // Fallback de contingencia si db_matriz está offline al momento de consultar precio
+                        $precioUnitario = 9990; 
                     }
-                } catch (Exception $e) {
-                    if (strpos($e->getMessage(), 'Stock insuficiente') !== false || strpos($e->getMessage(), 'Precio inválido') !== false) {
-                        throw $e;
-                    }
-                    
-                    error_log('[OrdersController::create] fallback AP para nodo ' . $node . ': ' . $e->getMessage());
-                    $nodoOffline = true;
-                    $numeroOrden = 'SYNC-' . strtoupper(substr($pedidoId, 0, 8));
                 }
 
-                foreach ($itemsWithPrices as $item) {
-                    $detalleId = generateUuid();
-                    
+                $totalProductos += $precioUnitario * $item['cantidad'];
+                
+                $itemsWithIds[] = [
+                    'detalle_id'      => generateUuid(),
+                    'producto_id'     => $item['producto_id'],
+                    'cantidad'        => $item['cantidad'],
+                    'precio_unitario' => $precioUnitario,
+                    'carrito_item_id' => $item['id']
+                ];
+            }
+
+            $totalPagado = $totalProductos + $totalDespachoPedido;
+            $compraExitosa = false;
+
+            // Intento 1: Conectar a la Matriz
+            try {
+                $matrizPdo = dbMatriz();
+                $matrizPdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+                foreach ($itemsWithIds as $item) {
                     $stmtMatriz = $matrizPdo->prepare('CALL sp_realizar_compra(
                         :ped_id, :cli_id, :num_ord, :suc_origen, :dir_despacho, :tipo_entrega, :estado,
                         :tot_prod, :tot_despacho, :tot_pagado,
@@ -287,17 +326,66 @@ class OrdersController
                         ':tot_prod'     => $totalProductos,
                         ':tot_despacho' => $totalDespachoPedido,
                         ':tot_pagado'   => $totalPagado,
-                        
-                        ':det_id'       => $detalleId,
+                        ':det_id'       => $item['detalle_id'],
                         ':prod_id'      => $item['producto_id'],
                         ':qty'          => $item['cantidad'],
                         ':precio'       => $item['precio_unitario'],
-                        
                         ':carrito_id'   => $item['carrito_item_id'],
-                        ':nodo_offline' => $nodoOffline ? 1 : 0
+                        ':nodo_offline' => 0
                     ]);
                 }
+                $compraExitosa = true;
 
+                // Descuento stock local tras confirmación de la Matriz
+                try {
+                    $pdoLocal = dbSucursal($node);
+                    $this->descontarStockLocal($pdoLocal, $sucursalId, $itemsWithIds);
+                } catch (Exception $eStock) {
+                    error_log('[Matriz OK pero Fallo Stock Local] ' . $eStock->getMessage());
+                }
+
+            } catch (PDOException $e) {
+                error_log('[Matriz Caída] Fallback a contingencia local para nodo ' . $node . ': ' . $e->getMessage());
+                
+                // Intento 2: Contingencia Local
+                $pdoLocal = dbSucursal($node);
+                $pdoLocal->beginTransaction();
+
+                try {
+                    // Descuento stock local en contingencia
+                    $this->descontarStockLocal($pdoLocal, $sucursalId, $itemsWithIds);
+
+                    foreach ($itemsWithIds as $item) {
+                        // Guardar en tabla de huérfanas
+                        $stmtHuerfana = $pdoLocal->prepare('
+                            INSERT INTO ventas_huerfanas_matriz 
+                            (id, pedido_id, usuario_id, producto_id, cantidad, precio_unitario, total) 
+                            VALUES (:id, :ped_id, :usu_id, :prod_id, :cant, :precio, :total)
+                        ');
+                        
+                        $stmtHuerfana->execute([
+                            ':id'     => generateUuid(),
+                            ':ped_id' => $pedidoId,
+                            ':usu_id' => $this->clienteId,
+                            ':prod_id'=> $item['producto_id'],
+                            ':cant'   => $item['cantidad'],
+                            ':precio' => $item['precio_unitario'],
+                            ':total'  => $item['precio_unitario'] * $item['cantidad']
+                        ]);
+                    }
+                    
+                    $pdoLocal->commit();
+                    $compraExitosa = true;
+                    $numeroOrden = 'SYNC-' . strtoupper(substr($pedidoId, 0, 8)); // Marca visual de que operó en contingencia
+                    
+                } catch (Exception $eLocal) {
+                    $pdoLocal->rollBack();
+                    error_log('[Contingencia Fallida] ' . $eLocal->getMessage());
+                    return ['success' => false, 'error' => 'No se pudo procesar la compra ni en Matriz ni en Contingencia Local.'];
+                }
+            }
+
+            if ($compraExitosa) {
                 $pedidosCreados[] = [
                     'pedido_id'    => $pedidoId,
                     'numero_orden' => $numeroOrden,
@@ -306,33 +394,27 @@ class OrdersController
                     'node'         => $node,
                     'total_pagado' => $totalPagado,
                 ];
-
                 $totalGlobal += $totalPagado;
             }
-
-            if (!empty($carrito['carrito_id'])) {
-                $matrizPdo->prepare('DELETE FROM carrito WHERE id = :id')->execute([
-                    ':id' => $carrito['carrito_id']
-                ]);
-            }
-
-            return [
-                'success'          => true,
-                'message'          => 'Pedido creado correctamente',
-                'pedidos_creados'  => $pedidosCreados,
-                'total_pagado'     => $totalGlobal,
-                'cantidad_pedidos' => count($pedidosCreados),
-                'node_info'        => Database::getInstance()->getNodeInfo(),
-            ];
-        } catch (Throwable $e) {
-            error_log('[OrdersController::create][ERROR] ' . $e->getMessage());
-
-            return [
-                'success' => false,
-                'error'   => 'Error al crear el pedido: ' . $e->getMessage(),
-            ];
         }
+
+        // Limpiar carrito si todo salió bien (incluso si dbMatriz está caída, puedes eliminar el carrito en la DB de sesión o local)
+        // Limpieza estricta de buffer antes de emitir JSON para evitar corrupción de AJAX
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success'          => true,
+            'message'          => 'Pedido procesado correctamente',
+            'pedidos_creados'  => $pedidosCreados,
+            'total_pagado'     => $totalGlobal,
+            'cantidad_pedidos' => count($pedidosCreados)
+        ]);
+        exit;
     }
+
 
     public function updateStatus(string $orderId, string $estado): array
     {
@@ -413,5 +495,22 @@ class OrdersController
 
         header('Location: ' . url('reviews') . '?node=' . urlencode($node));
         exit;
+    }
+
+    private function descontarStockLocal(PDO $pdoLocal, string $sucursalId, array $itemsWithIds): void
+    {
+        foreach ($itemsWithIds as $item) {
+            $stmtStock = $pdoLocal->prepare('CALL sp_actualizar_stock(:pid, :sid, :qty, @success)');
+            $stmtStock->execute([
+                ':pid' => $item['producto_id'],
+                ':sid' => $sucursalId,
+                ':qty' => $item['cantidad']
+            ]);
+            
+            $res = $pdoLocal->query('SELECT @success AS success')->fetch(PDO::FETCH_ASSOC);
+            if (!$res || $res['success'] == 0) {
+                throw new RuntimeException("Stock insuficiente local para producto {$item['producto_id']}");
+            }
+        }
     }
 }

@@ -58,27 +58,9 @@ $pageTitle = 'Checkout - SisDist Marketplace';
                 </div>
 
                 <div class="form-group" id="direccionGroup" style="display: none;">
-                    <label for="direccion_despacho_id">Dirección de despacho</label>
-                    <select id="direccion_despacho_id" name="direccion_despacho_id">
-                        <option value="">Selecciona una dirección</option>
-                        <?php foreach ($direcciones as $direccion): ?>
-                            <?php
-                                $direccionTexto = trim(
-                                    ($direccion['calle'] ?? '') . ' ' .
-                                    ($direccion['numero'] ?? '') .
-                                    (!empty($direccion['depto_block']) ? ', ' . $direccion['depto_block'] : '')
-                                );
-
-                                if (!empty($direccion['ciudad_nombre'])) {
-                                    $direccionTexto .= ' - ' . $direccion['ciudad_nombre'];
-                                }
-                            ?>
-                            <option value="<?php echo e($direccion['id'] ?? ''); ?>">
-                                <?php echo e($direccionTexto); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                    <small>Debes seleccionar una dirección registrada para despacho.</small>
+                    <label for="direccion_manual">Dirección de despacho</label>
+                    <input type="text" name="direccion_manual" id="direccion_manual" class="form-control" placeholder="Ej: Av. Las Araucarias 123, Depto 4">
+                    <small>Ingresa tu dirección completa para el despacho.</small>
                 </div>
 
                 <div class="form-group">
@@ -159,7 +141,7 @@ $pageTitle = 'Checkout - SisDist Marketplace';
         (function () {
             const tipoEntrega = document.getElementById('tipo_entrega');
             const direccionGroup = document.getElementById('direccionGroup');
-            const direccionSelect = document.getElementById('direccion_despacho_id');
+            const direccionManual = document.getElementById('direccion_manual');
             const shippingCost = document.getElementById('shippingCost');
             const orderTotal = document.getElementById('orderTotal');
 
@@ -180,11 +162,11 @@ $pageTitle = 'Checkout - SisDist Marketplace';
 
                 if (tipo === 'despacho_domicilio') {
                     direccionGroup.style.display = 'block';
-                    direccionSelect.setAttribute('required', 'required');
+                    direccionManual.setAttribute('required', 'required');
                 } else {
                     direccionGroup.style.display = 'none';
-                    direccionSelect.removeAttribute('required');
-                    direccionSelect.value = '';
+                    direccionManual.removeAttribute('required');
+                    direccionManual.value = '';
                 }
             }
 

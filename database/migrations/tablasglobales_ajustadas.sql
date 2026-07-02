@@ -130,3 +130,32 @@ CREATE TABLE detalle_compras (
     CONSTRAINT fk_detcompra_oc FOREIGN KEY (orden_compra_id) REFERENCES ordenes_compra(id) ON DELETE CASCADE,
     CONSTRAINT fk_detcompra_prod FOREIGN KEY (producto_id) REFERENCES productos(id)
 );
+
+-- Crear tabla de pedidos centralizada
+CREATE TABLE IF NOT EXISTS pedidos (
+    id CHAR(36) PRIMARY KEY,
+    cliente_id CHAR(36) NOT NULL,
+    numero_orden VARCHAR(50) UNIQUE NOT NULL,
+    sucursal_origen_id CHAR(36) NOT NULL,
+    direccion_despacho_id CHAR(36),
+    tipo_entrega VARCHAR(50) NOT NULL,
+    estado_pedido VARCHAR(50) NOT NULL,
+    total_productos INT NOT NULL DEFAULT 0,
+    total_despacho INT NOT NULL DEFAULT 0,
+    total_pagado INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Crear detalle de pedidos centralizado
+CREATE TABLE IF NOT EXISTS detalle_pedidos (
+    id CHAR(36) PRIMARY KEY,
+    pedido_id CHAR(36) NOT NULL,
+    producto_id CHAR(36) NOT NULL,
+    cantidad INT NOT NULL,
+    precio_unitario_pagado INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_detalle_pedido FOREIGN KEY (pedido_id) REFERENCES pedidos(id) ON DELETE CASCADE,
+    CONSTRAINT chk_detalle_cantidad CHECK (cantidad > 0),
+    CONSTRAINT chk_detalle_precio CHECK (precio_unitario_pagado >= 0)
+);

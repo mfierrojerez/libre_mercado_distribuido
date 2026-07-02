@@ -45,8 +45,12 @@ class CartController
         $resultado = $this->add($productoId, $sucursalId, $cantidad);
 
         if ($this->isAjax()) {
-            ob_clean();
-            header('Content-Type: application/json');
+            // Limpieza estricta de buffer antes de emitir JSON para evitar corrupción de AJAX
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            
+            header('Content-Type: application/json; charset=utf-8');
             if (!empty($resultado['success'])) {
                 echo json_encode(['success' => true, 'message' => $resultado['message'] ?? 'Producto agregado al carrito']);
             } else {
@@ -76,8 +80,12 @@ class CartController
         $resultado = $this->update($itemId, $cantidad);
 
         if ($this->isAjax()) {
-            ob_clean();
-            header('Content-Type: application/json');
+            // Limpieza estricta de buffer antes de emitir JSON para evitar corrupción de AJAX
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            
+            header('Content-Type: application/json; charset=utf-8');
             if (!empty($resultado['success'])) {
                 echo json_encode(['success' => true, 'message' => $resultado['message'] ?? 'Carrito actualizado']);
             } else {
@@ -101,8 +109,12 @@ class CartController
         $resultado = $this->remove($itemId);
 
         if ($this->isAjax()) {
-            ob_clean();
-            header('Content-Type: application/json');
+            // Limpieza estricta de buffer antes de emitir JSON para evitar corrupción de AJAX
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            
+            header('Content-Type: application/json; charset=utf-8');
             if (!empty($resultado['success'])) {
                 echo json_encode(['success' => true, 'message' => $resultado['message'] ?? 'Producto eliminado']);
             } else {
@@ -124,8 +136,12 @@ class CartController
         $resultado = $this->clear();
 
         if ($this->isAjax()) {
-            ob_clean();
-            header('Content-Type: application/json');
+            // Limpieza estricta de buffer antes de emitir JSON para evitar corrupción de AJAX
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            
+            header('Content-Type: application/json; charset=utf-8');
             if (!empty($resultado['success'])) {
                 echo json_encode(['success' => true, 'message' => $resultado['message'] ?? 'Carrito vaciado']);
             } else {

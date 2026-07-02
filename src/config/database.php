@@ -16,7 +16,7 @@ class Database
 
     private static ?Database $instance = null;
 
-    private PDO $matrizConnection;
+    private ?PDO $matrizConnection = null;
     private string $nodeType;
     private string $nodeName;
 
@@ -51,17 +51,6 @@ class Database
             PDO::MYSQL_ATTR_FOUND_ROWS   => true,
         ];
 
-        try {
-            $this->matrizConnection = new PDO(
-                "mysql:host={$hostMap[self::NODE_MATRIZ]};dbname=db_matriz;charset=utf8mb4",
-                $user,
-                $pass,
-                $options
-            );
-        } catch (PDOException $e) {
-            throw new Exception("Error conexión db_matriz: " . $e->getMessage(), 0, $e);
-        }
-
         foreach (self::LOCAL_NODES as $node) {
             $dbName = 'db_' . $node;
             try {
@@ -95,6 +84,30 @@ class Database
 
     public function getMatrizConnection(): PDO
     {
+        if ($this->matrizConnection === null) {
+            $host = getenv('DB_MATRIZ_HOST') ?: 'nodo_matriz_db';
+            $user = getenv('DB_USER') ?: 'appuser';
+            $pass = getenv('DB_PASSWORD') ?: 'apppassword';
+
+            $options = [
+                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES   => false,
+                PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4",
+                PDO::MYSQL_ATTR_FOUND_ROWS   => true,
+            ];
+
+            try {
+                $this->matrizConnection = new PDO(
+                    "mysql:host={$host};dbname=db_matriz;charset=utf8mb4",
+                    $user,
+                    $pass,
+                    $options
+                );
+            } catch (PDOException $e) {
+                throw new Exception("Error conexión db_matriz: " . $e->getMessage(), 0, $e);
+            }
+        }
         return $this->matrizConnection;
     }
 

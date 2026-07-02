@@ -422,7 +422,7 @@ function getCarrito(?string $sessionToken = null, ?string $clienteId = null): ar
             'total_items' => $totalItems,
             'subtotal'    => $subtotal,
         ];
-    } catch (PDOException $e) {
+    } catch (Throwable $e) {
         error_log('[getCarrito] ' . $e->getMessage());
         return $empty;
     }

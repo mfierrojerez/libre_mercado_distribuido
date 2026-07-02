@@ -53,6 +53,18 @@ CREATE TABLE detalle_pedidos (
     CONSTRAINT chk_detalle_precio CHECK (precio_unitario_pagado >= 0)
 );
 
+CREATE TABLE IF NOT EXISTS ventas_huerfanas_matriz (
+    id CHAR(36) PRIMARY KEY,
+    pedido_id CHAR(36) NOT NULL,
+    usuario_id CHAR(36) NOT NULL,
+    producto_id CHAR(36) NOT NULL,
+    cantidad INT NOT NULL,
+    precio_unitario INT NOT NULL,
+    total INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
 -- === ÍNDICES OPERATIVOS ===
 CREATE INDEX idx_stock_producto ON stock (producto_id);
 CREATE INDEX idx_stock_sucursal ON stock (sucursal_id);

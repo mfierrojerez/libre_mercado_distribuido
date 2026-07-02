@@ -28,14 +28,19 @@ if (empty($_SESSION['sucursal_id'])) {
     if ($defaultSucursalId !== '') {
         $_SESSION['sucursal_id'] = $defaultSucursalId;
     } else {
-        $row = queryOne(dbMatriz(), '
-            SELECT id
-            FROM sucursales
-            WHERE activa = 1
-            ORDER BY es_bodega_central DESC, nombre ASC
-            LIMIT 1
-        ');
-        $_SESSION['sucursal_id'] = $row['id'] ?? '';
+        try {
+            $row = queryOne(dbMatriz(), '
+                SELECT id
+                FROM sucursales
+                WHERE activa = 1
+                ORDER BY es_bodega_central DESC, nombre ASC
+                LIMIT 1
+            ');
+            $_SESSION['sucursal_id'] = $row['id'] ?? '';
+        } catch (Throwable $e) {
+            error_log('[INDEX] dbMatriz no disponible para sucursal default: ' . $e->getMessage());
+            $_SESSION['sucursal_id'] = '';
+        }
     }
 }
 
@@ -112,6 +117,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $state = trim(strtoupper((string)($input['state'] ?? '')));
                 $allowedNodes = ['norte', 'sur', 'centro'];
                 
+                if (($pathParts[1] ?? '') === 'sync-reverse') {
+                    require_once __DIR__ . '/controllers/AdminSyncController.php';
+                    (new AdminSyncController())->handleSyncReverse();
+                    exit;
+                }
+
                 if (in_array($node, $allowedNodes, true) && in_array($state, ['ONLINE', 'OFFLINE'], true)) {
                     $statesFile = __DIR__ . '/config/node_states.json';
                     $states = is_file($statesFile) ? (json_decode(file_get_contents($statesFile), true) ?: []) : [];
@@ -379,10 +390,16 @@ if ($route === 'products' && !empty($id)) {
     ];
 
     if (array_key_exists($route, $dataRoutes)) {
-        $definition = $dataRoutes[$route]();
-        $content = page($definition['view']);
-        $data['pageTitle'] = $definition['title'];
-        $data = array_merge($data, $definition['data']);
+        try {
+            $definition = $dataRoutes[$route]();
+            $content = page($definition['view']);
+            $data['pageTitle'] = $definition['title'];
+            $data = array_merge($data, $definition['data']);
+        } catch (Throwable $e) {
+            error_log('[INDEX ROUTE ERROR] Falló la consulta a la matriz: ' . $e->getMessage());
+            $content = page('contingencia');
+            $data['pageTitle'] = 'Contingencia';
+        }
     } else {
         http_response_code(404);
         $content = page('404');
